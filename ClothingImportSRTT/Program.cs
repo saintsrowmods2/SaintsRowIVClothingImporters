@@ -10,13 +10,20 @@ using System.Xml.Linq;
 using ThomasJepp.SaintsRow;
 using ThomasJepp.SaintsRow.AssetAssembler;
 using ThomasJepp.SaintsRow.GameInstances;
+using ThomasJepp.SaintsRow.Localization;
 using ThomasJepp.SaintsRow.Packfiles;
+using ThomasJepp.SaintsRow.Strings;
 
 namespace ClothingImportSRTT
 {
     class Program
     {
         static string tempFolder = @"D:\SR\temp";
+        static Dictionary<Language, List<uint>> srivStringKeys = new Dictionary<Language, List<uint>>();
+        static Dictionary<Language, Dictionary<uint, string>> newStrings = new Dictionary<Language, Dictionary<uint, string>>();
+        static Dictionary<Language, Dictionary<uint, string>> srttStrings = new Dictionary<Language, Dictionary<uint, string>>();
+
+        static List<string> srivItems = new List<string>();
 
         static IContainer FindContainer(IAssetAssemblerFile asm, string containerName)
         {
@@ -61,7 +68,7 @@ namespace ClothingImportSRTT
             return dst;
         }
 
-        static void LoadSRIVClothingNames(IGameInstance sriv, List<string> srivItems, string xtbl)
+        static void LoadSRIVClothingNames(IGameInstance sriv, string xtbl)
         {
             using (Stream srivItemsStream = sriv.OpenPackfileFile(xtbl))
             {
@@ -73,6 +80,71 @@ namespace ClothingImportSRTT
                 {
                     string name = node.Element("Name").Value;
                     srivItems.Add(name);
+                }
+            }
+        }
+
+        static void LoadSRIVStringHashes(IGameInstance sriv)
+        {
+            var results = sriv.SearchForFiles("*.le_strings");
+            foreach (var result in results)
+            {
+                string filename = result.Value.Filename.ToLowerInvariant();
+                filename = Path.GetFileNameWithoutExtension(filename);
+
+                string[] pieces = filename.Split('_');
+                string languageCode = pieces.Last();
+
+                Language language = LanguageUtility.GetLanguageFromCode(languageCode);
+
+                if (!srivStringKeys.ContainsKey(language))
+                    srivStringKeys.Add(language, new List<uint>());
+
+                List<uint> keys = srivStringKeys[language];
+
+                using (Stream s = sriv.OpenPackfileFile(result.Value.Filename, result.Value.Packfile))
+                {
+                    StringFile file = new StringFile(s, language, sriv);
+
+                    foreach (var hash in file.GetHashes())
+                    {
+                        keys.Add(hash);
+                    }
+                }
+            }
+        }
+
+        static void LoadSRTTStrings(IGameInstance srtt)
+        {
+            var results = srtt.SearchForFiles("*.le_strings");
+            foreach (var result in results)
+            {
+                string filename = result.Value.Filename.ToLowerInvariant();
+                filename = Path.GetFileNameWithoutExtension(filename);
+
+                string[] pieces = filename.Split('_');
+                string languageCode = pieces.Last();
+
+                Language language = LanguageUtility.GetLanguageFromCode(languageCode);
+
+                if (!srttStrings.ContainsKey(language))
+                    srttStrings.Add(language, new Dictionary<uint, string>());
+
+                Dictionary<uint, string> strings = srttStrings[language];
+
+                using (Stream s = srtt.OpenPackfileFile(result.Value.Filename, result.Value.Packfile))
+                {
+                    StringFile file = new StringFile(s, language, srtt);
+
+                    foreach (var hash in file.GetHashes())
+                    {
+                        if (strings.ContainsKey(hash))
+                        {
+                            continue;
+                        }
+
+                        strings.Add(hash, file.GetString(hash));
+                    }
                 }
             }
         }
@@ -143,21 +215,6 @@ namespace ClothingImportSRTT
 
         static void ImportClothing(string sourceXtbl, string sourceAsm, IAssetAssemblerFile newAsm, XElement customizationItemTable)
         {
-            List<string> srivItems = new List<string>();
-
-            Console.Write("Finding existing SRIV clothing... ");
-
-            IGameInstance sriv = GameInstance.GetFromSteamId(GameSteamID.SaintsRowIV);
-            LoadSRIVClothingNames(sriv, srivItems, "customization_items.xtbl");
-            LoadSRIVClothingNames(sriv, srivItems, "dlc1_customization_items.xtbl");
-            LoadSRIVClothingNames(sriv, srivItems, "dlc2_customization_items.xtbl");
-            LoadSRIVClothingNames(sriv, srivItems, "dlc3_customization_items.xtbl");
-            LoadSRIVClothingNames(sriv, srivItems, "dlc4_customization_items.xtbl");
-            LoadSRIVClothingNames(sriv, srivItems, "dlc5_customization_items.xtbl");
-            LoadSRIVClothingNames(sriv, srivItems, "dlc6_customization_items.xtbl");
-
-            Console.WriteLine("done!");
-
             int count = 0;
 
             IGameInstance srtt = GameInstance.GetFromSteamId(GameSteamID.SaintsRowTheThird);
@@ -183,6 +240,36 @@ namespace ClothingImportSRTT
                     if (srivItems.Contains(name))
                         continue;
 
+                    string stringName = node.Element("DisplayName").Value;
+                    uint stringKey = Hashes.CrcVolition(stringName);
+
+                    string newStringName = "SRTT_" + stringName;
+                    uint newStringKey = Hashes.CrcVolition(newStringName);
+
+                    node.Element("DisplayName").Value = newStringName;
+
+                    foreach (var pair in srivStringKeys)
+                    {
+                        Language language = pair.Key;
+                        string text = null;
+                        if (srttStrings[language].ContainsKey(stringKey))
+                        {
+                            text = srttStrings[language][stringKey];
+                        }
+                        else
+                        {
+                            text = "[format][color:red]" + srttStrings[Language.English][stringKey] + "[/format]";
+                        }
+
+                        if (!newStrings.ContainsKey(language))
+                            newStrings.Add(language, new Dictionary<uint, string>());
+
+                        if (newStrings[language].ContainsKey(newStringKey))
+                            continue;
+
+                        newStrings[language].Add(newStringKey, "SRTT: " + text);
+                    }
+
                     bool isDLC = false;
 
                     var dlcElement = node.Element("Is_DLC");
@@ -192,6 +279,9 @@ namespace ClothingImportSRTT
                         string isDLCString = dlcElement.Value;
 
                         bool.TryParse(isDLCString, out isDLC);
+
+                        // Remove Is_DLC element so DLC items show up in SRIV
+                        dlcElement.Remove();
                     }
 
                     //if (isDLC)
@@ -275,12 +365,23 @@ namespace ClothingImportSRTT
                 newAsm = AssetAssemblerFile.FromStream(newAsmStream);
             }
 
+            IGameInstance sriv = GameInstance.GetFromSteamId(GameSteamID.SaintsRowIV);
+            IGameInstance srtt = GameInstance.GetFromSteamId(GameSteamID.SaintsRowTheThird);
+
+            LoadSRIVClothingNames(sriv, "customization_items.xtbl");
+            LoadSRIVClothingNames(sriv, "dlc1_customization_items.xtbl");
+            LoadSRIVClothingNames(sriv, "dlc2_customization_items.xtbl");
+            LoadSRIVClothingNames(sriv, "dlc3_customization_items.xtbl");
+            LoadSRIVClothingNames(sriv, "dlc4_customization_items.xtbl");
+            LoadSRIVClothingNames(sriv, "dlc5_customization_items.xtbl");
+            LoadSRIVClothingNames(sriv, "dlc6_customization_items.xtbl");
+
+            LoadSRIVStringHashes(sriv);
+            LoadSRTTStrings(srtt);
+
             ImportClothing("customization_items.xtbl", "customize_item.asm_pc", newAsm, customizationItemTable);
-
             ImportClothing("dlc1_customization_items.xtbl", "dlc1_customize_item.asm_pc", newAsm, customizationItemTable);
-
             ImportClothing("dlc2_customization_items.xtbl", "dlc2_customize_item.asm_pc", newAsm, customizationItemTable);
-
             ImportClothing("dlc3_customization_items.xtbl", "dlc3_customize_item.asm_pc", newAsm, customizationItemTable);
 
             using (Stream xtblOutStream = File.Create(Path.Combine(tempFolder, "customization_items.xtbl")))
@@ -302,6 +403,37 @@ namespace ClothingImportSRTT
                 newAsm.Save(asmOutStream);
             }
 
+            foreach (var pair in newStrings)
+            {
+                Language language = pair.Key;
+                Dictionary<uint, string> strings = pair.Value;
+
+                UInt16 bucketCount = (UInt16)(strings.Count() / 5);
+                if (bucketCount < 32)
+                    bucketCount = 32;
+                else if (bucketCount < 64)
+                    bucketCount = 64;
+                else if (bucketCount < 128)
+                    bucketCount = 128;
+                else if (bucketCount < 256)
+                    bucketCount = 256;
+                else if (bucketCount < 512)
+                    bucketCount = 512;
+                else
+                    bucketCount = 1024;
+
+                StringFile stringFile = new StringFile(bucketCount, language, sriv);
+
+                foreach (var newString in strings)
+                {
+                    stringFile.AddString(newString.Key, newString.Value);
+                }
+
+                using (Stream stringsOutStream = File.Create(Path.Combine(tempFolder, String.Format("srtt_clothing_{0}.le_strings", LanguageUtility.GetLanguageCode(language).ToLowerInvariant()))))
+                {
+                    stringFile.Save(stringsOutStream);
+                }
+            }
 
             Console.WriteLine("Done!");
             Console.ReadLine();
