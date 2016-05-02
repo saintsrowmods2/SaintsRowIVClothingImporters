@@ -61,12 +61,9 @@ namespace ClothingImportSRTT
             return dst;
         }
 
-        static void ImportClothing(string sourceXtbl, string sourceAsm, IAssetAssemblerFile newAsm, XElement customizationItemTable)
+        static void LoadSRIVClothingNames(IGameInstance sriv, List<string> srivItems, string xtbl)
         {
-            List<string> srivItems = new List<string>();
-
-            IGameInstance sriv = GameInstance.GetFromSteamId(GameSteamID.SaintsRowIV);
-            using (Stream srivItemsStream = sriv.OpenPackfileFile("customization_items.xtbl"))
+            using (Stream srivItemsStream = sriv.OpenPackfileFile(xtbl))
             {
                 XDocument xml = XDocument.Load(srivItemsStream);
 
@@ -78,6 +75,88 @@ namespace ClothingImportSRTT
                     srivItems.Add(name);
                 }
             }
+        }
+
+        static bool ClonePackfile(IGameInstance srtt, string packfileName, string clothSimFilename, IAssetAssemblerFile srttAsm, IAssetAssemblerFile newAsm)
+        {
+            using (Stream srttStream = srtt.OpenPackfileFile(packfileName))
+            {
+                if (srttStream != null)
+                {
+                    IContainer srttContainer = FindContainer(srttAsm, packfileName);
+
+                    if (srttContainer != null)
+                    {
+                        IContainer newContainer = ConvertContainer(srttContainer, newAsm);
+
+                        if (clothSimFilename != null)
+                        {
+                            IPrimitive clothSimPrimitive = newContainer.CreatePrimitive();
+                            clothSimPrimitive.Name = clothSimFilename;
+                            clothSimPrimitive.Type = 47; // <PrimitiveType ID="47" Name="Pcust cloth sim" />
+                            clothSimPrimitive.Allocator = 0;
+                            clothSimPrimitive.Flags = 0;
+                            clothSimPrimitive.ExtensionIndex = 0;
+                            clothSimPrimitive.AllocationGroup = 0;
+                            newContainer.Primitives.Add(clothSimPrimitive);
+                            newContainer.PrimitiveCount++;
+                        }
+
+                        newAsm.Containers.Add(newContainer);
+
+                        using (IPackfile srttPackfile = Packfile.FromStream(srttStream, true))
+                        {
+                            using (IPackfile srivPackfile = Packfile.FromVersion(0x0A, true))
+                            {
+                                srivPackfile.IsCompressed = true;
+                                srivPackfile.IsCondensed = true;
+
+                                foreach (var file in srttPackfile.Files)
+                                {
+                                    Stream stream = file.GetStream();
+                                    srivPackfile.AddFile(stream, file.Name);
+                                }
+
+                                if (clothSimFilename != null)
+                                {
+                                    Stream clothSimStream = srtt.OpenPackfileFile(clothSimFilename);
+                                    srivPackfile.AddFile(clothSimStream, clothSimFilename);
+                                }
+
+                                using (Stream srivStream = File.Create(Path.Combine(tempFolder, packfileName)))
+                                {
+                                    srivPackfile.Save(srivStream);
+                                    srivPackfile.Update(newContainer);
+                                }
+                            }
+                        }
+                    }
+
+                    return true;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+        }
+
+        static void ImportClothing(string sourceXtbl, string sourceAsm, IAssetAssemblerFile newAsm, XElement customizationItemTable)
+        {
+            List<string> srivItems = new List<string>();
+
+            Console.Write("Finding existing SRIV clothing... ");
+
+            IGameInstance sriv = GameInstance.GetFromSteamId(GameSteamID.SaintsRowIV);
+            LoadSRIVClothingNames(sriv, srivItems, "customization_items.xtbl");
+            LoadSRIVClothingNames(sriv, srivItems, "dlc1_customization_items.xtbl");
+            LoadSRIVClothingNames(sriv, srivItems, "dlc2_customization_items.xtbl");
+            LoadSRIVClothingNames(sriv, srivItems, "dlc3_customization_items.xtbl");
+            LoadSRIVClothingNames(sriv, srivItems, "dlc4_customization_items.xtbl");
+            LoadSRIVClothingNames(sriv, srivItems, "dlc5_customization_items.xtbl");
+            LoadSRIVClothingNames(sriv, srivItems, "dlc6_customization_items.xtbl");
+
+            Console.WriteLine("done!");
 
             int count = 0;
 
@@ -91,14 +170,14 @@ namespace ClothingImportSRTT
 
             using (Stream srttItemsStream = srtt.OpenPackfileFile(sourceXtbl))
             {
-                bool found = false;
-
                 XDocument xml = XDocument.Load(srttItemsStream);
 
                 var table = xml.Descendants("Table");
 
                 foreach (var node in table.Descendants("Customization_Item"))
                 {
+                    bool found = false;
+
                     string name = node.Element("Name").Value;
 
                     if (srivItems.Contains(name))
@@ -150,120 +229,12 @@ namespace ClothingImportSRTT
                             string maleStr2 = String.Format("custmesh_{0}.str2_pc", crc);
                             string femaleStr2 = String.Format("custmesh_{0}f.str2_pc", crc);
 
-                            using (Stream srttMaleStream = srtt.OpenPackfileFile(maleStr2))
+                            bool foundMale = ClonePackfile(srtt, maleStr2, clothSimFilename, srttAsm, newAsm);
+                            bool foundFemale = ClonePackfile(srtt, femaleStr2, clothSimFilename, srttAsm, newAsm);
+
+                            if (foundMale || foundFemale)
                             {
-                                if (srttMaleStream != null)
-                                {
-                                    IContainer srttContainer = FindContainer(srttAsm, maleStr2);
-
-                                    if (srttContainer != null)
-                                    {
-                                        found = true;
-
-                                        IContainer newContainer = ConvertContainer(srttContainer, newAsm);
-
-                                        if (clothSimFilename != null)
-                                        {
-                                            IPrimitive clothSimPrimitive = newContainer.CreatePrimitive();
-                                            clothSimPrimitive.Name = clothSimFilename;
-                                            clothSimPrimitive.Type = 47; // <PrimitiveType ID="47" Name="Pcust cloth sim" />
-                                            clothSimPrimitive.Allocator = 0;
-                                            clothSimPrimitive.Flags = 0;
-                                            clothSimPrimitive.ExtensionIndex = 0;
-                                            clothSimPrimitive.AllocationGroup = 0;
-                                            newContainer.Primitives.Add(clothSimPrimitive);
-                                            newContainer.PrimitiveCount++;
-                                        }
-
-                                        newAsm.Containers.Add(newContainer);
-
-                                        using (IPackfile srttMalePackfile = Packfile.FromStream(srttMaleStream, true))
-                                        {
-                                            using (IPackfile srivMalePackfile = Packfile.FromVersion(0x0A, true))
-                                            {
-                                                srivMalePackfile.IsCompressed = true;
-                                                srivMalePackfile.IsCondensed = true;
-
-                                                foreach (var file in srttMalePackfile.Files)
-                                                {
-                                                    Stream stream = file.GetStream();
-                                                    srivMalePackfile.AddFile(stream, file.Name);
-                                                }
-
-                                                if (clothSimFilename != null)
-                                                {
-                                                    Stream clothSimStream = srtt.OpenPackfileFile(clothSimFilename);
-                                                    srivMalePackfile.AddFile(clothSimStream, clothSimFilename);
-                                                }
-
-                                                using (Stream srivMaleStream = File.Create(Path.Combine(tempFolder, maleStr2)))
-                                                {
-                                                    srivMalePackfile.Save(srivMaleStream);
-                                                    srivMalePackfile.Update(newContainer);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-
-                            using (Stream srttFemaleStream = srtt.OpenPackfileFile(femaleStr2))
-                            {
-                                if (srttFemaleStream != null)
-                                {
-                                    IContainer srttContainer = FindContainer(srttAsm, femaleStr2);
-
-                                    if (srttContainer != null)
-                                    {
-                                        found = true;
-
-                                        IContainer newContainer = ConvertContainer(srttContainer, newAsm);
-
-                                        if (clothSimFilename != null)
-                                        {
-                                            IPrimitive clothSimPrimitive = newContainer.CreatePrimitive();
-                                            clothSimPrimitive.Name = clothSimFilename;
-                                            clothSimPrimitive.Type = 47; // <PrimitiveType ID="47" Name="Pcust cloth sim" />
-                                            clothSimPrimitive.Allocator = 0;
-                                            clothSimPrimitive.Flags = 0;
-                                            clothSimPrimitive.ExtensionIndex = 0;
-                                            clothSimPrimitive.AllocationGroup = 0;
-                                            newContainer.Primitives.Add(clothSimPrimitive);
-                                            newContainer.PrimitiveCount++;
-                                        }
-
-                                        newAsm.Containers.Add(newContainer);
-
-                                        using (IPackfile srttFemalePackfile = Packfile.FromStream(srttFemaleStream, true))
-                                        {
-
-                                            using (IPackfile srivFemalePackfile = Packfile.FromVersion(0x0A, true))
-                                            {
-                                                srivFemalePackfile.IsCompressed = true;
-                                                srivFemalePackfile.IsCondensed = true;
-
-                                                foreach (var file in srttFemalePackfile.Files)
-                                                {
-                                                    Stream stream = file.GetStream();
-                                                    srivFemalePackfile.AddFile(stream, file.Name);
-                                                }
-
-                                                if (clothSimFilename != null)
-                                                {
-                                                    Stream clothSimStream = srtt.OpenPackfileFile(clothSimFilename);
-                                                    srivFemalePackfile.AddFile(clothSimStream, clothSimFilename);
-                                                }
-
-                                                using (Stream srivFemaleStream = File.Create(Path.Combine(tempFolder, femaleStr2)))
-                                                {
-                                                    srivFemalePackfile.Save(srivFemaleStream);
-                                                    srivFemalePackfile.Update(newContainer);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                                found = true;
                             }
                         }
                     }
