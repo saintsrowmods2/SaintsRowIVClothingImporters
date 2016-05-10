@@ -78,7 +78,7 @@ namespace ClothingImportSRTT
 
                 foreach (var node in table.Descendants("Customization_Item"))
                 {
-                    string name = node.Element("Name").Value;
+                    string name = node.Element("Name").Value.ToLowerInvariant();
                     srivItems.Add(name);
                 }
             }
@@ -149,7 +149,7 @@ namespace ClothingImportSRTT
             }
         }
 
-        static bool ClonePackfile(IGameInstance srtt, string packfileName, string clothSimFilename, IAssetAssemblerFile srttAsm, IAssetAssemblerFile newAsm)
+        static bool ClonePackfile(IGameInstance srtt, string packfileName, string clothSimFilename, IAssetAssemblerFile srttAsm, IAssetAssemblerFile newAsm, string meshFilename)
         {
             using (Stream srttStream = srtt.OpenPackfileFile(packfileName))
             {
@@ -161,10 +161,12 @@ namespace ClothingImportSRTT
                     {
                         IContainer newContainer = ConvertContainer(srttContainer, newAsm);
 
+                        string actualClothSimFilename = null;
                         if (clothSimFilename != null)
                         {
+                            actualClothSimFilename = Path.ChangeExtension(meshFilename, ".sim_pc");
                             IPrimitive clothSimPrimitive = newContainer.CreatePrimitive();
-                            clothSimPrimitive.Name = clothSimFilename;
+                            clothSimPrimitive.Name = actualClothSimFilename;
                             clothSimPrimitive.Type = 47; // <PrimitiveType ID="47" Name="Pcust cloth sim" />
                             clothSimPrimitive.Allocator = 0;
                             clothSimPrimitive.Flags = 0;
@@ -187,12 +189,23 @@ namespace ClothingImportSRTT
                                 {
                                     Stream stream = file.GetStream();
                                     srivPackfile.AddFile(stream, file.Name);
+
+                                    string extension = Path.GetExtension(file.Name).ToLowerInvariant();
+                                    if (extension == ".cmorph_pc")
+                                    {
+                                        // Copy morph to disk.
+                                        using (Stream morphStream = File.Create(Path.Combine(tempFolder, file.Name)))
+                                        {
+                                            stream.CopyTo(morphStream);
+                                        }
+                                        stream.Seek(0, SeekOrigin.Begin);
+                                    }
                                 }
 
                                 if (clothSimFilename != null)
                                 {
-                                    Stream clothSimStream = srtt.OpenPackfileFile(clothSimFilename);
-                                    srivPackfile.AddFile(clothSimStream, clothSimFilename);
+                                    Stream clothSimStream = srtt.OpenPackfileFile(actualClothSimFilename);
+                                    srivPackfile.AddFile(clothSimStream, actualClothSimFilename);
                                 }
 
                                 using (Stream srivStream = File.Create(Path.Combine(tempFolder, packfileName)))
@@ -237,7 +250,7 @@ namespace ClothingImportSRTT
 
                     string name = node.Element("Name").Value;
 
-                    if (srivItems.Contains(name))
+                    if (srivItems.Contains(name.ToLowerInvariant()))
                         continue;
 
                     string stringName = node.Element("DisplayName").Value;
@@ -247,6 +260,8 @@ namespace ClothingImportSRTT
                     uint newStringKey = Hashes.CrcVolition(newStringName);
 
                     node.Element("DisplayName").Value = newStringName;
+
+                    string englishText = srttStrings[Language.English][stringKey];
 
                     foreach (var pair in srivStringKeys)
                     {
@@ -287,7 +302,7 @@ namespace ClothingImportSRTT
                     //if (isDLC)
                         //continue;
 
-                    Console.Write("[{0}] {1}... ", count, name);
+                    Console.Write("[{0}] {1}: {2} - {3}... ", count, name, newStringName, englishText);
 
                     List<string> str2Names = new List<string>();
 
@@ -298,6 +313,14 @@ namespace ClothingImportSRTT
                         var maleMeshFilenameNode = meshInformationNode.Element("Male_Mesh_Filename");
                         var filenameNode = maleMeshFilenameNode.Element("Filename");
                         string maleMeshFilename = filenameNode.Value;
+
+                        var femaleMeshFilenameNode = meshInformationNode.Element("Female_Mesh_Filename");
+                        string femaleMeshFilename = maleMeshFilename;
+                        if (femaleMeshFilenameNode != null)
+                        {
+                            filenameNode = femaleMeshFilenameNode.Element("Filename");
+                            femaleMeshFilename = filenameNode.Value;
+                        }
 
                         string clothSimFilename = null;
                         var clothSimFilenameNode = meshInformationNode.Element("Cloth_Sim_Filename");
@@ -319,8 +342,8 @@ namespace ClothingImportSRTT
                             string maleStr2 = String.Format("custmesh_{0}.str2_pc", crc);
                             string femaleStr2 = String.Format("custmesh_{0}f.str2_pc", crc);
 
-                            bool foundMale = ClonePackfile(srtt, maleStr2, clothSimFilename, srttAsm, newAsm);
-                            bool foundFemale = ClonePackfile(srtt, femaleStr2, clothSimFilename, srttAsm, newAsm);
+                            bool foundMale = ClonePackfile(srtt, maleStr2, clothSimFilename, srttAsm, newAsm, maleMeshFilename);
+                            bool foundFemale = ClonePackfile(srtt, femaleStr2, clothSimFilename, srttAsm, newAsm, femaleMeshFilename);
 
                             if (foundMale || foundFemale)
                             {
