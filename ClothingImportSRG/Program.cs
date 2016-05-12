@@ -14,14 +14,14 @@ using ThomasJepp.SaintsRow.Localization;
 using ThomasJepp.SaintsRow.Packfiles;
 using ThomasJepp.SaintsRow.Strings;
 
-namespace ClothingImportSRTT
+namespace ClothingImportSRG
 {
     class Program
     {
-        static string tempFolder = @"D:\SR\temp\srtt";
+        static string tempFolder = @"D:\SR\temp\srg";
         static Dictionary<Language, List<uint>> srivStringKeys = new Dictionary<Language, List<uint>>();
         static Dictionary<Language, Dictionary<uint, string>> newStrings = new Dictionary<Language, Dictionary<uint, string>>();
-        static Dictionary<Language, Dictionary<uint, string>> srttStrings = new Dictionary<Language, Dictionary<uint, string>>();
+        static Dictionary<Language, Dictionary<uint, string>> srgStrings = new Dictionary<Language, Dictionary<uint, string>>();
 
         static List<string> srivItems = new List<string>();
 
@@ -114,9 +114,9 @@ namespace ClothingImportSRTT
             }
         }
 
-        static void LoadSRTTStrings(IGameInstance srtt)
+        static void LoadSRGStrings(IGameInstance srg)
         {
-            var results = srtt.SearchForFiles("*.le_strings");
+            var results = srg.SearchForFiles("*.le_strings");
             foreach (var result in results)
             {
                 string filename = result.Value.Filename.ToLowerInvariant();
@@ -127,14 +127,14 @@ namespace ClothingImportSRTT
 
                 Language language = LanguageUtility.GetLanguageFromCode(languageCode);
 
-                if (!srttStrings.ContainsKey(language))
-                    srttStrings.Add(language, new Dictionary<uint, string>());
+                if (!srgStrings.ContainsKey(language))
+                    srgStrings.Add(language, new Dictionary<uint, string>());
 
-                Dictionary<uint, string> strings = srttStrings[language];
+                Dictionary<uint, string> strings = srgStrings[language];
 
-                using (Stream s = srtt.OpenPackfileFile(result.Value.Filename, result.Value.Packfile))
+                using (Stream s = srg.OpenPackfileFile(result.Value.Filename, result.Value.Packfile))
                 {
-                    StringFile file = new StringFile(s, language, srtt);
+                    StringFile file = new StringFile(s, language, srg);
 
                     foreach (var hash in file.GetHashes())
                     {
@@ -149,17 +149,17 @@ namespace ClothingImportSRTT
             }
         }
 
-        static bool ClonePackfile(IGameInstance srtt, string packfileName, string clothSimFilename, IAssetAssemblerFile srttAsm, IAssetAssemblerFile newAsm, string meshFilename)
+        static bool ClonePackfile(IGameInstance srg, string packfileName, string clothSimFilename, IAssetAssemblerFile srgAsm, IAssetAssemblerFile newAsm, string meshFilename)
         {
-            using (Stream srttStream = srtt.OpenPackfileFile(packfileName))
+            using (Stream srgStream = srg.OpenPackfileFile(packfileName))
             {
-                if (srttStream != null)
+                if (srgStream != null)
                 {
-                    IContainer srttContainer = FindContainer(srttAsm, packfileName);
+                    IContainer srgContainer = FindContainer(srgAsm, packfileName);
 
-                    if (srttContainer != null)
+                    if (srgContainer != null)
                     {
-                        IContainer newContainer = ConvertContainer(srttContainer, newAsm);
+                        IContainer newContainer = ConvertContainer(srgContainer, newAsm);
 
                         string actualClothSimFilename = null;
                         if (clothSimFilename != null)
@@ -178,14 +178,14 @@ namespace ClothingImportSRTT
 
                         newAsm.Containers.Add(newContainer);
 
-                        using (IPackfile srttPackfile = Packfile.FromStream(srttStream, true))
+                        using (IPackfile srgPackfile = Packfile.FromStream(srgStream, true))
                         {
                             using (IPackfile srivPackfile = Packfile.FromVersion(0x0A, true))
                             {
                                 srivPackfile.IsCompressed = true;
                                 srivPackfile.IsCondensed = true;
 
-                                foreach (var file in srttPackfile.Files)
+                                foreach (var file in srgPackfile.Files)
                                 {
                                     Stream stream = file.GetStream();
                                     srivPackfile.AddFile(stream, file.Name);
@@ -204,8 +204,10 @@ namespace ClothingImportSRTT
 
                                 if (clothSimFilename != null)
                                 {
-                                    Stream clothSimStream = srtt.OpenPackfileFile(actualClothSimFilename);
-                                    srivPackfile.AddFile(clothSimStream, actualClothSimFilename);
+                                    Stream clothSimStream = srg.OpenPackfileFile(actualClothSimFilename);
+
+                                    if (!srivPackfile.ContainsFile(actualClothSimFilename))
+                                        srivPackfile.AddFile(clothSimStream, actualClothSimFilename);
                                 }
 
                                 using (Stream srivStream = File.Create(Path.Combine(tempFolder, packfileName)))
@@ -230,17 +232,17 @@ namespace ClothingImportSRTT
         {
             int count = 0;
 
-            IGameInstance srtt = GameInstance.GetFromSteamId(GameSteamID.SaintsRowTheThird);
+            IGameInstance srg = GameInstance.GetFromSteamId(GameSteamID.SaintsRowGatOutOfHell);
 
-            IAssetAssemblerFile srttAsm;
-            using (Stream srttAssetAssemblerStream = srtt.OpenPackfileFile(sourceAsm))
+            IAssetAssemblerFile srgAsm;
+            using (Stream srgAssetAssemblerStream = srg.OpenPackfileFile(sourceAsm))
             {
-                srttAsm = AssetAssemblerFile.FromStream(srttAssetAssemblerStream);
+                srgAsm = AssetAssemblerFile.FromStream(srgAssetAssemblerStream);
             }
 
-            using (Stream srttItemsStream = srtt.OpenPackfileFile(sourceXtbl))
+            using (Stream srgItemsStream = srg.OpenPackfileFile(sourceXtbl))
             {
-                XDocument xml = XDocument.Load(srttItemsStream);
+                XDocument xml = XDocument.Load(srgItemsStream);
 
                 var table = xml.Descendants("Table");
 
@@ -256,25 +258,16 @@ namespace ClothingImportSRTT
                     string stringName = node.Element("DisplayName").Value;
                     uint stringKey = Hashes.CrcVolition(stringName);
 
-                    string newStringName = "SRTT_" + stringName;
+                    string newStringName = "SRG_" + name.ToUpperInvariant();
                     uint newStringKey = Hashes.CrcVolition(newStringName);
 
                     node.Element("DisplayName").Value = newStringName;
 
-                    string englishText = srttStrings[Language.English][stringKey];
+                    string englishText = srgStrings[Language.English][stringKey];
 
                     foreach (var pair in srivStringKeys)
                     {
                         Language language = pair.Key;
-                        string text = null;
-                        if (srttStrings[language].ContainsKey(stringKey))
-                        {
-                            text = srttStrings[language][stringKey];
-                        }
-                        else
-                        {
-                            text = "[format][color:red]" + srttStrings[Language.English][stringKey] + "[/format]";
-                        }
 
                         if (!newStrings.ContainsKey(language))
                             newStrings.Add(language, new Dictionary<uint, string>());
@@ -282,7 +275,7 @@ namespace ClothingImportSRTT
                         if (newStrings[language].ContainsKey(newStringKey))
                             continue;
 
-                        newStrings[language].Add(newStringKey, "SRTT: " + text);
+                        newStrings[language].Add(newStringKey, "SRG: " + name);
                     }
 
                     bool isDLC = false;
@@ -342,8 +335,8 @@ namespace ClothingImportSRTT
                             string maleStr2 = String.Format("custmesh_{0}.str2_pc", crc);
                             string femaleStr2 = String.Format("custmesh_{0}f.str2_pc", crc);
 
-                            bool foundMale = ClonePackfile(srtt, maleStr2, clothSimFilename, srttAsm, newAsm, maleMeshFilename);
-                            bool foundFemale = ClonePackfile(srtt, femaleStr2, clothSimFilename, srttAsm, newAsm, femaleMeshFilename);
+                            bool foundMale = ClonePackfile(srg, maleStr2, clothSimFilename, srgAsm, newAsm, maleMeshFilename);
+                            bool foundFemale = ClonePackfile(srg, femaleStr2, clothSimFilename, srgAsm, newAsm, femaleMeshFilename);
 
                             if (foundMale || foundFemale)
                             {
@@ -389,7 +382,7 @@ namespace ClothingImportSRTT
             }
 
             IGameInstance sriv = GameInstance.GetFromSteamId(GameSteamID.SaintsRowIV);
-            IGameInstance srtt = GameInstance.GetFromSteamId(GameSteamID.SaintsRowTheThird);
+            IGameInstance srg = GameInstance.GetFromSteamId(GameSteamID.SaintsRowGatOutOfHell);
 
             LoadSRIVClothingNames(sriv, "customization_items.xtbl");
             LoadSRIVClothingNames(sriv, "dlc1_customization_items.xtbl");
@@ -400,12 +393,9 @@ namespace ClothingImportSRTT
             LoadSRIVClothingNames(sriv, "dlc6_customization_items.xtbl");
 
             LoadSRIVStringHashes(sriv);
-            LoadSRTTStrings(srtt);
+            LoadSRGStrings(srg);
 
             ImportClothing("customization_items.xtbl", "customize_item.asm_pc", newAsm, customizationItemTable);
-            ImportClothing("dlc1_customization_items.xtbl", "dlc1_customize_item.asm_pc", newAsm, customizationItemTable);
-            ImportClothing("dlc2_customization_items.xtbl", "dlc2_customize_item.asm_pc", newAsm, customizationItemTable);
-            ImportClothing("dlc3_customization_items.xtbl", "dlc3_customize_item.asm_pc", newAsm, customizationItemTable);
 
             using (Stream xtblOutStream = File.Create(Path.Combine(tempFolder, "customization_items.xtbl")))
             {
@@ -452,7 +442,7 @@ namespace ClothingImportSRTT
                     stringFile.AddString(newString.Key, newString.Value);
                 }
 
-                using (Stream stringsOutStream = File.Create(Path.Combine(tempFolder, String.Format("srtt_clothing_{0}.le_strings", LanguageUtility.GetLanguageCode(language).ToLowerInvariant()))))
+                using (Stream stringsOutStream = File.Create(Path.Combine(tempFolder, String.Format("srg_clothing_{0}.le_strings", LanguageUtility.GetLanguageCode(language).ToLowerInvariant()))))
                 {
                     stringFile.Save(stringsOutStream);
                 }
